@@ -333,8 +333,38 @@ docker exec -it kafka-1 kafka-topics \
 python consumer-3Brokers.py
 
 # Terminal 2
+python consumer-3Brokers.py
+
+# Terminal 3
+python consumer-3Brokers.py
+
+# Terminal 4
 python producer-3Brokers.py
 ```
+
+**Expected output:**
+
+```
+# Terminal 4: producer-3Brokers.py
+Starting Producer... Press Ctrl+C to stop.
+Sent: {'id': 1, 'message': 'Hello from Python to Docker Kafka- 3 Brokers!', 'timestamp': 1775653016.8498733}
+Sent: {'id': 2, 'message': 'Hello from Python to Docker Kafka- 3 Brokers!', 'timestamp': 1775653018.859776}
+Sent: {'id': 3, 'message': 'Hello from Python to Docker Kafka- 3 Brokers!', 'timestamp': 1775653020.8619697}
+
+# Terminal 1: consumer-3Brokers.py
+Consumer started... Waiting for messages.
+Received JSON: Hello from Python to Docker Kafka- 3 Brokers! (ID: 1)
+
+# Terminal 2: consumer-3Brokers.py
+Consumer started... Waiting for messages.
+Received JSON: Hello from Python to Docker Kafka- 3 Brokers! (ID: 2)
+
+# Terminal 3: consumer-3Brokers.py
+Consumer started... Waiting for messages.
+Received JSON: Hello from Python to Docker Kafka- 3 Brokers! (ID: 3)
+```
+Each Consumer in Consumer group 'track-group-01' responsible for one Partition.
+Try play with number of consumers, try 1 consumer, 2 consumers, and so on.
 
 **What changes vs single broker:**
 
@@ -382,6 +412,31 @@ docker exec -it rosetta-kafka kafka-topics \
   --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
 ```
 
+**pom.xml dependencies:**
+```xml
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>3.8.1</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.apache.kafka</groupId>
+        <artifactId>kafka-streams</artifactId>
+        <version>3.7.0</version>
+    </dependency>
+    <dependency>
+	    <groupId>org.slf4j</groupId>
+	    <artifactId>slf4j-simple</artifactId>
+	    <version>2.0.12</version>
+	</dependency>
+	<dependency>
+	    <groupId>com.fasterxml.jackson.core</groupId>
+	    <artifactId>jackson-databind</artifactId>
+	    <version>2.15.2</version>
+	</dependency>
+```
+
 **Build and run:**
 
 ```bash
@@ -392,12 +447,19 @@ mvn clean package
 mvn exec:java -Dexec.mainClass="com.kafka.example.Kafka.RevenueTracker"
 
 # Terminal 2 — start the producer
-mvn exec:java -Dexec.mainClass="com.producer.consumer.example.ProducerConsumer.TransactionProducer"
+mvn exec:java -Dexec.mainClass="com.kafka.example.Kafka.TransactionProducer"
 ```
 
-**Expected output (`RevenueTracker`):**
+**Expected output:**
 
 ```
+Terminal 2 — the producer
+🚀 Sending transactions...
+✅ Sent Starbucks
+✅ Sent Jumia
+✅ Sent Starbucks
+
+# Terminal 1 — the stream processor
 🚀 Kafka Streams App starting...
 🚀 Kafka Streams App Started! Current State: RUNNING
 📊 [LIVE UPDATE] Merchant: Starbucks | Total Transactions: 1
