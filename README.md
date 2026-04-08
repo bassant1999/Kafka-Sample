@@ -47,68 +47,199 @@ pip install kafka-python quixstreams
 
 ## Kafka setup (Docker)
 
+Both setups run Kafka in **KRaft mode** — no Zookeeper required. Each node acts as both broker and controller. Two listener types are configured per node:
+
+| Listener | Purpose |
+|---|---|
+| `PLAINTEXT://...:29092` | Internal — used by other Kafka nodes and the UI (inside the Docker network) |
+| `PLAINTEXT_HOST://...:9092+` | External — used by your Python/Java code running on your host machine |
+
+---
+
 ### Single broker
 
-```yaml
-# docker-compose.yml
-version: '3'
-services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:latest
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
+**Step 1 — Create network**
 
-  kafka:
-    image: confluentinc/cp-kafka:latest
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+```bash
+docker network create kafka-net
 ```
+
+**Step 2 — Run Kafka (KRaft mode)**
+
+```bash
+docker run -d --name rosetta-kafka \
+  --network kafka-net \
+  -p 9092:9092 \
+  -e KAFKA_NODE_ID=1 \
+  -e KAFKA_PROCESS_ROLES=broker,controller \
+  -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092 \
+  -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://rosetta-kafka:29092,PLAINTEXT_HOST://localhost:9092 \
+  -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+  -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT \
+  -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@rosetta-kafka:29093 \
+  -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+  -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
+  -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+  -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+  apache/kafka:latest
+```
+
+<details>
+<summary>One-liner (copy-paste)</summary>
+
+```bash
+docker run -d --name rosetta-kafka --network kafka-net -p 9092:9092 -e KAFKA_NODE_ID=1 -e KAFKA_PROCESS_ROLES=broker,controller -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092 -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://rosetta-kafka:29092,PLAINTEXT_HOST://localhost:9092 -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@rosetta-kafka:29093 -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 apache/kafka:latest
+```
+
+</details>
+
+**Step 3 — Run Kafka UI**
+
+```bash
+docker run -d --name kafka-ui \
+  --network kafka-net \
+  -p 8082:8080 \
+  -e KAFKA_CLUSTERS_0_NAME=local \
+  -e KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=rosetta-kafka:29092 \
+  provectuslabs/kafka-ui:latest
+```
+
+<details>
+<summary>One-liner (copy-paste)</summary>
+
+```bash
+docker run -d --name kafka-ui --network kafka-net -p 8082:8080 -e KAFKA_CLUSTERS_0_NAME=local -e KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=rosetta-kafka:29092 provectuslabs/kafka-ui:latest
+```
+
+</details>
+
+**Step 4 — Open UI:** wait ~15 seconds, then open [http://localhost:8082](http://localhost:8082). The `local` cluster should show as **Online**.
+
+**Ports:**
+
+| Service | Host port | Internal address |
+|---|---|---|
+| Kafka | `9092` | `rosetta-kafka:29092` |
+| Kafka UI | `8082` | — |
+
+---
 
 ### Three-broker cluster
 
-```yaml
-# docker-compose-3brokers.yml
-version: '3'
-services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:latest
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-
-  kafka1:
-    image: confluentinc/cp-kafka:latest
-    ports: ["9093:9093"]
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9093
-
-  kafka2:
-    image: confluentinc/cp-kafka:latest
-    ports: ["9094:9094"]
-    environment:
-      KAFKA_BROKER_ID: 2
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9094
-
-  kafka3:
-    image: confluentinc/cp-kafka:latest
-    ports: ["9095:9095"]
-    environment:
-      KAFKA_BROKER_ID: 3
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9095
-```
-
-Start the cluster:
+**Step 1 — Create network**
 
 ```bash
-docker-compose up -d
+docker network create kafka-net
 ```
+
+**Step 2 — Run 3 brokers**
+
+> Each broker must know about the other two via `KAFKA_CONTROLLER_QUORUM_VOTERS`. If this is wrong, you get 3 isolated single-node clusters instead of one cluster — the most common setup mistake.
+
+Broker 1:
+
+```bash
+docker run -d --name kafka-1 --network kafka-net \
+  -p 9093:9092 \
+  -e KAFKA_NODE_ID=1 \
+  -e KAFKA_PROCESS_ROLES=broker,controller \
+  -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092 \
+  -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-1:29092,PLAINTEXT_HOST://localhost:9093 \
+  -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+  -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT \
+  -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka-1:29093,2@kafka-2:29093,3@kafka-3:29093 \
+  apache/kafka:latest
+```
+
+<details>
+<summary>One-liner</summary>
+
+```bash
+docker run -d --name kafka-1 --network kafka-net -p 9093:9092 -e KAFKA_NODE_ID=1 -e KAFKA_PROCESS_ROLES=broker,controller -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092 -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-1:29092,PLAINTEXT_HOST://localhost:9093 -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka-1:29093,2@kafka-2:29093,3@kafka-3:29093 apache/kafka:latest
+```
+
+</details>
+
+Broker 2:
+
+```bash
+docker run -d --name kafka-2 --network kafka-net \
+  -p 9094:9092 \
+  -e KAFKA_NODE_ID=2 \
+  -e KAFKA_PROCESS_ROLES=broker,controller \
+  -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092 \
+  -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-2:29092,PLAINTEXT_HOST://localhost:9094 \
+  -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+  -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT \
+  -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka-1:29093,2@kafka-2:29093,3@kafka-3:29093 \
+  apache/kafka:latest
+```
+
+<details>
+<summary>One-liner</summary>
+
+```bash
+docker run -d --name kafka-2 --network kafka-net -p 9094:9092 -e KAFKA_NODE_ID=2 -e KAFKA_PROCESS_ROLES=broker,controller -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092 -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-2:29092,PLAINTEXT_HOST://localhost:9094 -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka-1:29093,2@kafka-2:29093,3@kafka-3:29093 apache/kafka:latest
+```
+
+</details>
+
+Broker 3:
+
+```bash
+docker run -d --name kafka-3 --network kafka-net \
+  -p 9095:9092 \
+  -e KAFKA_NODE_ID=3 \
+  -e KAFKA_PROCESS_ROLES=broker,controller \
+  -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092 \
+  -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-3:29092,PLAINTEXT_HOST://localhost:9095 \
+  -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+  -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT \
+  -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka-1:29093,2@kafka-2:29093,3@kafka-3:29093 \
+  apache/kafka:latest
+```
+
+<details>
+<summary>One-liner</summary>
+
+```bash
+docker run -d --name kafka-3 --network kafka-net -p 9095:9092 -e KAFKA_NODE_ID=3 -e KAFKA_PROCESS_ROLES=broker,controller -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092 -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-3:29092,PLAINTEXT_HOST://localhost:9095 -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka-1:29093,2@kafka-2:29093,3@kafka-3:29093 apache/kafka:latest
+```
+
+</details>
+
+**Step 3 — Run Kafka UI**
+
+```bash
+docker run -d --name kafka-gui \
+  --network kafka-net \
+  -p 8083:8080 \
+  -e KAFKA_CLUSTERS_0_NAME=local \
+  -e KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka-1:29092,kafka-2:29092,kafka-3:29092 \
+  provectuslabs/kafka-ui:latest
+```
+
+<details>
+<summary>One-liner</summary>
+
+```bash
+docker run -d --name kafka-gui --network kafka-net -p 8083:8080 -e KAFKA_CLUSTERS_0_NAME=local -e KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka-1:29092,kafka-2:29092,kafka-3:29092 provectuslabs/kafka-ui:latest
+```
+
+</details>
+
+**Step 4 — Open UI:** [http://localhost:8083](http://localhost:8083)
+
+**Ports:**
+
+| Service | Host port | Internal address |
+|---|---|---|
+| Broker 1 | `9093` | `kafka-1:29092` |
+| Broker 2 | `9094` | `kafka-2:29092` |
+| Broker 3 | `9095` | `kafka-3:29092` |
+| Kafka UI | `8083` | — |
+
+> **Local testing caveat:** all three brokers run on the same machine and share the same disk. There is no real fault tolerance — but the cluster wiring is structurally identical to a production setup.
 
 ---
 
@@ -141,7 +272,7 @@ Producer                         Broker                    Consumer
 **Create the topic:**
 
 ```bash
-docker exec -it <kafka-container> kafka-topics \
+docker exec -it rosetta-kafka kafka-topics \
   --create --topic test-events \
   --bootstrap-server localhost:9092 \
   --partitions 1 --replication-factor 1
@@ -189,7 +320,7 @@ The same producer/consumer pattern but connected to a three-broker cluster using
 **Create the topic with replication:**
 
 ```bash
-docker exec -it <kafka1-container> kafka-topics \
+docker exec -it kafka-1 kafka-topics \
   --create --topic test-three-brokers \
   --bootstrap-server localhost:9093 \
   --partitions 3 --replication-factor 3
@@ -242,10 +373,12 @@ TransactionProducer
 **Create topics:**
 
 ```bash
-kafka-topics --create --topic transactions \
+docker exec -it rosetta-kafka kafka-topics \
+  --create --topic transactions \
   --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
 
-kafka-topics --create --topic merchant-totals \
+docker exec -it rosetta-kafka kafka-topics \
+  --create --topic merchant-totals \
   --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
 ```
 
